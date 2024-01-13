@@ -16,75 +16,126 @@ type Student struct {
 	Grade int
 }
 
-func main() {
-
-	//ОБъявление  пустого хранилища
-	studentStorage := make(map[string]*Student)
-
-	// Основная логика  бесконечного запроса строки у пользователя
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Println("Введите текст: ")
-		input, err := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		// Проверка на ctrl+d с учетом есть ли что нибудь в хранилище или сразу был такой ввод (eof)
-		if err == io.EOF {
-			if len(studentStorage) > 0 {
-				fmt.Println("Студенты из хранилища:")
-				for _, student := range studentStorage {
-					fmt.Println(student.Name, student.Age, student.Grade)
-				}
-				break
-			} else {
-				fmt.Println("Хранилище студентов пусто.")
-				break
-			}
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Ошибка чтения: %v\n", err)
-			continue
-		}
-
-		// Если все ок - формирование  студента.
-		// Если возникет ошибка в функции newStudent - вывод ошибки и сброс на начало
-		tempStudent, err := newStudent(input)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-
-		// Если до этого все ок - добавление студента в хранилище
-		studentStorage[tempStudent.Name] = tempStudent
-	}
-
+// Набор методов Storage, содержащий логические операции программы.
+type Storage interface {
+	GetInfo() (string, error)
+	StringValidate(string) (string, int, int, error)
+	NewStudent(name string, age int, grade int) *Student
+	PutStudent(st *Student)
+	GetAllStudents() map[string]*Student
 }
 
-// Функцию создающая студента и отдающая структуру
-func newStudent(s string) (*Student, error) {
-	tempSlice := strings.Split(s, " ")
+// Структура хранилища информации о студнетах.
+type StudentsStorage struct {
+	students map[string]*Student
+}
 
-	// Проверки на длину, на числа в возрасте и оценке
+// Метод хранилища, который считывает пользовательский ввод строчно.
+func (s *StudentsStorage) GetInfo() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Println("Введите текст: ")
+	input, err := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	return input, err
+}
+
+// Метод хранилища, который проверяет корректность ввода посредством образования слайса tempSlice.
+// Если ввод не соответствует ожиданиям, выводится ошибка с подсказкой.
+// Если ввод проходит проверку, метод возвращает данные о студенте (имя, возраст, оценку)
+func (s *StudentsStorage) StringValidate(str string) (string, int, int, error) {
+	tempSlice := strings.Split(str, " ")
+
 	if len(tempSlice) != 3 {
-		return nil, errors.New("возможно опечатка, заново")
+		return "", 0, 0, errors.New("Неверный ввод. Ожидается имя, возраст, оценка: \"Петя 21 5\"")
 	}
 
+	tempName := tempSlice[0]
+
 	tempAge, err := strconv.Atoi(tempSlice[1])
-	if err != nil || tempAge < 0 || tempAge > 100 {
-		return nil, errors.New("не указаны числа, указаны неверно")
+	if err != nil || tempAge < 16 || tempAge > 100 {
+		return "", 0, 0, errors.New("Возраст указан неверно. Ожидается целое число от 16 до 100")
 	}
 
 	tempGrade, err := strconv.Atoi(tempSlice[2])
-	if err != nil || tempGrade < 0 {
-		return nil, errors.New("не указаны числа, указаны неверно")
+	if err != nil || tempGrade < 1 {
+		return "", 0, 0, errors.New("Оценка указана неверно. Ожидается целое число не менее 1.")
 	}
 
-	// Если все ок - формируем структуру студента
+	return tempName, tempAge, tempGrade, err
+}
+
+// Метод хранилища, который заполняет структуру Student полученными данными и собственно создает студента.
+func (s *StudentsStorage) NewStudent(name string, age int, grade int) *Student {
 	newStudent := Student{
-		Name:  tempSlice[0],
-		Age:   tempAge,
-		Grade: tempGrade,
+		Name:  name,
+		Age:   age,
+		Grade: grade,
 	}
+	return &newStudent
+}
 
-	return &newStudent, nil
+// Метод хранилища, который инициализирует это хранилище и служит для последующего вывода информации о нем.
+func (s *StudentsStorage) GetAllStudents() map[string]*Student {
+	return s.students
+}
+
+// Метод хранилища, который помещает структуру студента (по сути информацию о нем) в это хранилище.
+func (s *StudentsStorage) PutStudent(st *Student) {
+	s.students[st.Name] = st
+}
+
+// Представляет основную структуру приложения с репозиторием Storage.
+// Отвечает за управление логикой приложения.
+type App struct {
+	repository Storage
+}
+
+// Запускает основной цикл приложения.
+// В этом цикле бесконечно считывается пользовательский ввод, проводится валидация, создается новый студент
+// и информация о нем помещается в хранилище.
+// При вводе ctrl+d (EOF) программа завершает цикл и выводит информацию о всех студентах.
+func (a *App) Run() {
+	for {
+		input, err := a.repository.GetInfo()
+		if err == io.EOF {
+			a.printInfo()
+			return
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "Ошибка чтения: %v\n", err)
+		} else {
+			name, age, grade, err := a.repository.StringValidate(input)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			newStudent := a.repository.NewStudent(name, age, grade)
+			a.repository.PutStudent(newStudent)
+		}
+	}
+}
+
+// Выводит информацию о всех студентах из хранилища.
+// Если студентов нет, выводится соответствующее сообщение.
+func (a *App) printInfo() {
+	if len(a.repository.GetAllStudents()) > 0 {
+		fmt.Println("Студенты из хранилища:")
+		for _, student := range a.repository.GetAllStudents() {
+			fmt.Println(student.Name, student.Age, student.Grade)
+		}
+	} else {
+		fmt.Println("Данные о студентах отсутствуют. Выход.")
+	}
+}
+
+// Создает экземпляр App с предоставленным хранилищем Storage.
+func NewApp(repository Storage) *App {
+	return &App{repository: repository}
+}
+
+func main() {
+	repository := &StudentsStorage{students: make(map[string]*Student)}
+	app := NewApp(repository)
+	app.Run()
 }
